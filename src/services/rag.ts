@@ -3,11 +3,11 @@ import { searchDocuments } from "./query.js"
 import type { QueryRequest, RAGResponse } from "../types.js"
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import { StringOutputParser } from '@langchain/core/output_parsers'
-import type { Source } from "stream/iter"
+import type { Response } from "express"
 
 const PROMPT_TEMPLATE = ChatPromptTemplate.fromMessages([
     [
-        "system", 
+        "system",
         `
         Você é um assistente de IA que responde perguntas com base em documentos fornecidos.
 
@@ -54,7 +54,7 @@ export async function generateRAGResponse({ question, topK = 3 }: QueryRequest):
     })
 
     // Extrair as respostas e formatar
-    const sources = searchResults.answers.map((item, index) => ({ 
+    const sources = searchResults.answers.map((item, index) => ({
         fileName: item.metadata.fileName,
         page: item.metadata.page ?? 0,
         score: item.score
@@ -65,5 +65,42 @@ export async function generateRAGResponse({ question, topK = 3 }: QueryRequest):
         answer,
         sources,
     }
+}
+
+export async function generateRAGStreamingResponse({ question, topK = 3, res }: QueryRequest & { res: Response }): Promise<void> {
+
+    const searchResults = await searchDocuments({ question, topK })
+
+    if (searchResults.answers.length === 0) {
+        res.write(`data: ${JSON.stringify({ answer: "Sei nao, meu amigo" })}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+        return;
+    }
+
+    const sources = searchResults.answers.map((item) => ({
+        fileName: item.metadata.fileName,
+        page: item.metadata.page ?? 0,
+        score: item.score
+    }));
+
+    res.write(`data: ${JSON.stringify({ type: "sources", content: sources })}\n\n`);
+
+    // construir o contexto a partir dos resultados da pesquisa
+    const context = searchResults.answers.map((item, index) => `[${index + 1}] ${item.text}`).join("\n\n");
+
+    // Chain  de prompts para gerar a resposta
+    const chains = PROMPT_TEMPLATE.pipe(llm).pipe(new StringOutputParser());
+
+    const stream = await chains.stream({
+        context,
+        question
+    })
+
+    for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify({ type: "token", content: chunk })}\n\n`);
+    } 
+    res.write("data: [DONE]\n\n");
+    res.end();
 }
 

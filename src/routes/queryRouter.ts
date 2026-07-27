@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { generateRAGResponse } from "../services/rag.js"
+import { generateRAGResponse, generateRAGStreamingResponse } from "../services/rag.js"
 
 export const queryRouter = Router();
 
@@ -13,3 +13,22 @@ queryRouter.post("/", async (req, res) => {
         res.status(500).json({ error: "Erro ao processar a consulta" })
     }
 })
+
+queryRouter.post("/stream", async (req, res) => {
+    try {
+        const startTime = Date.now();
+        const { question, topK } = req.body;
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        
+        await generateRAGStreamingResponse({question , topK, res});
+
+        const duration = Date.now() - startTime;
+        console.log(`Consulta em streaming processada em ${duration}ms`);
+
+    } catch (error) {
+        console.error("Erro ao processar a consulta em streaming:", error);
+        res.status(500).json({ error: "Erro ao processar a consulta em streaming" });
+    }
+}); 
